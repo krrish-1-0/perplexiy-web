@@ -3,6 +3,14 @@ import ReactMarkdown from 'react-markdown'
 
 const API = import.meta.env.VITE_API_URL || 'http://localhost:8000'
 const OR_DEFAULT = 'openai/gpt-4o-mini'
+export const DOLPHIN_MODEL = 'cognitivecomputations/dolphin-mistral-24b-venice-edition'
+const OR_PRESETS = [
+  OR_DEFAULT,
+  'google/gemini-2.5-flash',
+  'anthropic/claude-3.5-sonnet',
+  'meta-llama/llama-3.1-8b-instruct',
+  DOLPHIN_MODEL,
+]
 
 const SUGGESTIONS = [
   { icon: '🤖', label: 'Latest in AI', q: 'What are the latest breakthroughs in AI this week?' },
@@ -188,8 +196,30 @@ export default function App() {
             />
             {provider === 'openrouter' && (
               <>
-                <label>OpenRouter model (vision-capable, e.g. openai/gpt-4o-mini)</label>
-                <input value={model} onChange={(e) => setModel(e.target.value)} placeholder={OR_DEFAULT} />
+                <label>OpenRouter model</label>
+                <select
+                  value={OR_PRESETS.includes(model) ? model : '__custom__'}
+                  onChange={(e) => {
+                    if (e.target.value !== '__custom__') setModel(e.target.value)
+                    else setModel('')
+                  }}
+                >
+                  {OR_PRESETS.map((m) => (
+                    <option key={m} value={m}>{m}</option>
+                  ))}
+                  <option value="__custom__">✏️ Custom…</option>
+                </select>
+                {!OR_PRESETS.includes(model) && (
+                  <input
+                    value={model}
+                    onChange={(e) => setModel(e.target.value)}
+                    placeholder={DOLPHIN_MODEL}
+                    style={{ marginTop: 8 }}
+                  />
+                )}
+                <div style={{ fontSize: 12, opacity: 0.75, marginTop: 4 }}>
+                  Text chat: any preset incl. Dolphin Venice. Vision (image): use {OR_DEFAULT}.
+                </div>
                 <label>Image (optional — vision)</label>
                 <input
                   value={imageUrl}

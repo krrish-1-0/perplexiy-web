@@ -24,6 +24,17 @@ except ImportError:  # fallback for old envs
 APP_URL = os.getenv("APP_URL", "http://localhost:5173")
 GEMINI_MODEL = "gemini-3.6-flash"
 OR_DEFAULT_MODEL = "openai/gpt-4o-mini"
+# Uncensored chat model on OpenRouter. Python equivalent of the JS SDK call:
+#   openrouter.chat.send({ model: DOLPHIN_MODEL, messages: [{role: "user", content: ...}] })
+DOLPHIN_MODEL = "cognitivecomputations/dolphin-mistral-24b-venice-edition"
+# Any OpenRouter model id is accepted via `model` — presets for docs/UI:
+OR_PRESETS = [
+    OR_DEFAULT_MODEL,
+    "google/gemini-2.5-flash",
+    "anthropic/claude-3.5-sonnet",
+    "meta-llama/llama-3.1-8b-instruct",
+    DOLPHIN_MODEL,
+]
 
 app = FastAPI(title="Lumina API")
 app.add_middleware(

@@ -19,11 +19,13 @@ except ImportError:
 # ---------- CONFIG ----------
 MODEL = "gemini-3.6-flash"  # Gemini-direct backend
 OR_DEFAULT_MODEL = "openai/gpt-4o-mini"  # OpenRouter backend (vision-capable, cheap)
+DOLPHIN_MODEL = "cognitivecomputations/dolphin-mistral-24b-venice-edition"  # OpenRouter uncensored chat
 OR_PRESETS = [
     "openai/gpt-4o-mini",
     "google/gemini-2.5-flash",
     "anthropic/claude-3.5-sonnet",
     "meta-llama/llama-3.1-8b-instruct",
+    DOLPHIN_MODEL,
 ]
 APP_URL = os.getenv("APP_URL", "https://share.streamlit.io")  # OpenRouter referer header
 PAGE_TITLE = "Lumina"
