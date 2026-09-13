@@ -5,6 +5,7 @@ No secrets file needed on the server. Deploy: push this folder to GitHub -> shar
 """
 import os
 import time
+import base64
 import concurrent.futures
 import requests
 from urllib.parse import urlparse
@@ -17,7 +18,13 @@ except ImportError:
 
 # ---------- CONFIG ----------
 MODEL = "gemini-3.6-flash"  # Gemini-direct backend
-OR_DEFAULT_MODEL = "google/gemini-2.5-flash"  # OpenRouter backend
+OR_DEFAULT_MODEL = "openai/gpt-4o-mini"  # OpenRouter backend (vision-capable, cheap)
+OR_PRESETS = [
+    "openai/gpt-4o-mini",
+    "google/gemini-2.5-flash",
+    "anthropic/claude-3.5-sonnet",
+    "meta-llama/llama-3.1-8b-instruct",
+]
 APP_URL = os.getenv("APP_URL", "https://share.streamlit.io")  # OpenRouter referer header
 PAGE_TITLE = "Lumina"
 TEAL = "#20b8cd"
@@ -141,8 +148,17 @@ with st.sidebar:
             placeholder="sk-or-v1...",
         )
         st.session_state.or_key = or_in.strip()
-        or_model_in = st.text_input("OpenRouter model", value=st.session_state.or_model)
-        st.session_state.or_model = or_model_in.strip() or OR_DEFAULT_MODEL
+        # Model presets + custom (your snippet uses openai/gpt-4o-mini)
+        preset = st.selectbox(
+            "OpenRouter model",
+            OR_PRESETS + ["✏️ Custom…"],
+            index=0 if st.session_state.or_model in OR_PRESETS else len(OR_PRESETS),
+        )
+        if preset == "✏️ Custom…":
+            or_model_in = st.text_input("Custom model id", value=st.session_state.or_model if st.session_state.or_model not in OR_PRESETS else "")
+            st.session_state.or_model = (or_model_in.strip() or OR_DEFAULT_MODEL)
+        else:
+            st.session_state.or_model = preset
         st.caption("openrouter.ai · many models, pay-as-you-go")
         st.link_button("Get OpenRouter Key", "https://openrouter.ai/keys")
     else:
@@ -207,6 +223,41 @@ def llm_generate(prompt):
         r.raise_for_status()
         return r.json()["choices"][0]["message"]["content"]
     return _gemini().models.generate_content(model=MODEL, contents=prompt).text
+
+
+def llm_vision(question, image_url):
+    """Vision Q&A via OpenRouter (e.g. openai/gpt-4o-mini). Same as JS SDK chat.send with image_url."""
+    if st.session_state.provider != "OpenRouter":
+        raise RuntimeError("Image questions need Provider = OpenRouter (switch in sidebar).")
+    r = requests.post(
+        "https://openrouter.ai/api/v1/chat/completions",
+        headers={
+            "Authorization": f"Bearer {OPENROUTER_API_KEY}",
+            "Content-Type": "application/json",
+            "HTTP-Referer": APP_URL,
+            "X-Title": "Lumina",
+        },
+        json={
+            "model": OPENROUTER_MODEL,
+            "max_tokens": 2048,
+            "messages": [{
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": question or "What is in this image?"},
+                    {"type": "image_url", "image_url": {"url": image_url}},
+                ],
+            }],
+        },
+        timeout=90,
+    )
+    r.raise_for_status()
+    return r.json()["choices"][0]["message"]["content"]
+
+
+def _upload_to_data_url(uploaded):
+    mime = getattr(uploaded, "type", "") or "image/jpeg"
+    b64 = base64.b64encode(uploaded.getvalue()).decode()
+    return f"data:{mime};base64,{b64}"
 
 # ---------- STATE ----------
 if "messages" not in st.session_state:
@@ -333,6 +384,9 @@ with c2:
         if st.button("＋ New thread", use_container_width=True):
             st.session_state.messages = []
             st.session_state.pending = None
+            st.session_state.pending_image = None
+            st.session_state.attached_image = None
+            st.session_state.attached_url = ""
             st.rerun()
 
 # ---------- HERO (empty state) ----------
@@ -358,6 +412,11 @@ if not st.session_state.messages:
 for msg in st.session_state.messages:
     if msg["role"] == "user":
         st.markdown(f'<div class="q-title">{msg["content"]}</div>', unsafe_allow_html=True)
+        if msg.get("image"):
+            try:
+                st.image(msg["image"], width=420)
+            except Exception:
+                pass
         queries = msg.get("queries") or ([msg["query"]] if msg.get("query") else [])
         if queries:
             pills = " ".join(f'<span class="step-pill">🔍 {qq}</span>' for qq in queries)
@@ -367,23 +426,91 @@ for msg in st.session_state.messages:
         n_q = len(msg.get("queries", [])) or (1 if msg.get("query") else 0)
         if n_src:
             st.caption(f"Researched {n_src} sources across {max(n_q,1)} angle(s)")
+        elif msg.get("image_model"):
+            st.caption(f"🖼️ Vision answer via `{msg.get('image_model')}`")
         render_sources(msg.get("sources", []))
         with st.container(border=True):
             st.markdown(msg["content"])
 
+# ---------- IMAGE INPUT (vision via OpenRouter, e.g. openai/gpt-4o-mini) ----------
+if "attached_image" not in st.session_state:
+    st.session_state.attached_image = None
+if "attached_url" not in st.session_state:
+    st.session_state.attached_url = ""
+
+with st.expander("📷 Image (optional — ask about a picture with gpt-4o-mini)", expanded=False):
+    up = st.file_uploader("Upload image", type=["png", "jpg", "jpeg", "webp"])
+    if up is not None:
+        try:
+            st.session_state.attached_image = _upload_to_data_url(up)
+        except Exception as e:
+            st.error(f"Could not read upload: {e}")
+    url_in = st.text_input(
+        "…or paste image URL",
+        value=st.session_state.attached_url,
+        placeholder="https://live.staticflickr.com/3851/14825276609_098cac593d_b.jpg",
+    )
+    st.session_state.attached_url = (url_in or "").strip()
+    c_img1, c_img2 = st.columns([1, 1])
+    with c_img1:
+        if st.button("🖼️ Try sample image"):
+            st.session_state.attached_url = "https://live.staticflickr.com/3851/14825276609_098cac593d_b.jpg"
+            st.session_state.attached_image = None
+            st.rerun()
+    with c_img2:
+        if st.button("✖ Clear image"):
+            st.session_state.attached_image = None
+            st.session_state.attached_url = ""
+            st.rerun()
+    effective_preview = st.session_state.attached_image or st.session_state.attached_url
+    if effective_preview:
+        st.caption("Attached — your next question will use vision:")
+        try:
+            st.image(effective_preview, width=320)
+        except Exception:
+            st.caption(effective_preview[:120])
+
 # ---------- INPUT ----------
-chat_val = st.chat_input("Ask anything…")
+chat_val = st.chat_input("Ask anything… (attach image above for vision)")
 if chat_val:
     st.session_state.pending = chat_val
+    # snapshot attached image at submit time
+    st.session_state.pending_image = st.session_state.attached_image or st.session_state.attached_url or None
+    # clear attachment so next question starts fresh
+    st.session_state.attached_image = None
+    st.session_state.attached_url = ""
     st.rerun()
 
 if st.session_state.pending:
     q = st.session_state.pending
+    img = st.session_state.get("pending_image")
     st.session_state.pending = None
-    n_q = N_QUERIES if "N_QUERIES" in dir() else 3
+    st.session_state.pending_image = None
     # show question immediately
-    st.session_state.messages.append({"role": "user", "content": q, "query": "", "queries": []})
+    st.session_state.messages.append({"role": "user", "content": q, "query": "", "queries": [], "image": img})
     st.markdown(f'<div class="q-title">{q}</div>', unsafe_allow_html=True)
+    if img:
+        try:
+            st.image(img, width=420)
+        except Exception:
+            pass
+
+    # ---- Vision path (image attached): direct OpenRouter image_url call ----
+    if img:
+        with st.status("🖼️ Reading image with OpenRouter vision…", expanded=True) as status:
+            try:
+                st.write(f"🤖 Model: `{OPENROUTER_MODEL}`")
+                answer = llm_vision(q, img)
+                status.update(label="✅ Done — vision answer", state="complete", expanded=False)
+                st.session_state.messages.append({"role": "assistant", "content": answer, "sources": [], "queries": [], "query": "", "image_model": OPENROUTER_MODEL})
+                st.rerun()
+            except Exception as e:
+                status.update(label="⚠️ Vision failed", state="error", expanded=False)
+                reply = f"⚠️ Vision error: `{e}`\n\n- Provider must be **OpenRouter**\n- Model must support vision (e.g. `openai/gpt-4o-mini`)\n- Check key has credits"
+                st.session_state.messages.append({"role": "assistant", "content": reply, "sources": [], "queries": [], "query": ""})
+                st.rerun()
+
+    n_q = N_QUERIES if "N_QUERIES" in dir() else 3
 
     with st.status(f"🔬 Deep research: {n_q} angle(s), parallel search…", expanded=True) as status:
         try:

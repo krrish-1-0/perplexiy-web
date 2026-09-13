@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import ReactMarkdown from 'react-markdown'
 
 const API = import.meta.env.VITE_API_URL || 'http://localhost:8000'
-const OR_DEFAULT = 'google/gemini-2.5-flash'
+const OR_DEFAULT = 'openai/gpt-4o-mini'
 
 const SUGGESTIONS = [
   { icon: '🤖', label: 'Latest in AI', q: 'What are the latest breakthroughs in AI this week?' },
@@ -36,8 +36,9 @@ export default function App() {
   const [model, setModel] = useState(() => localStorage.getItem('px_model') || OR_DEFAULT)
   const [depth, setDepth] = useState(3)
   const [showSettings, setShowSettings] = useState(false)
-  const [messages, setMessages] = useState([]) // {role, content, sources, queries}
+  const [messages, setMessages] = useState([]) // {role, content, sources, queries, image}
   const [input, setInput] = useState('')
+  const [imageUrl, setImageUrl] = useState('') // http URL or data:image/...;base64 preview for vision
   const [loading, setLoading] = useState(false)
   const [stepIdx, setStepIdx] = useState(0)
   const [error, setError] = useState('')
@@ -91,9 +92,15 @@ export default function App() {
       setShowSettings(true)
       return
     }
+    const img = imageUrl.trim() || null
+    if (img && provider !== 'openrouter') {
+      setError('Image questions need Provider = OpenRouter with a vision model like openai/gpt-4o-mini.')
+      return
+    }
     setError('')
     setInput('')
-    setMessages((m) => [...m, { role: 'user', content: q, queries: [] }])
+    setMessages((m) => [...m, { role: 'user', content: q, queries: [], image: img }])
+    setImageUrl('')
     setLoading(true)
     setStepIdx(0)
     try {
@@ -112,6 +119,7 @@ export default function App() {
           api_key: apiKey.trim(),
           model: provider === 'openrouter' ? model.trim() : '',
           depth,
+          image_url: img || '',
         }),
       })
       timers.current.forEach(clearTimeout)
@@ -180,8 +188,31 @@ export default function App() {
             />
             {provider === 'openrouter' && (
               <>
-                <label>OpenRouter model</label>
+                <label>OpenRouter model (vision-capable, e.g. openai/gpt-4o-mini)</label>
                 <input value={model} onChange={(e) => setModel(e.target.value)} placeholder={OR_DEFAULT} />
+                <label>Image (optional — vision)</label>
+                <input
+                  value={imageUrl}
+                  onChange={(e) => setImageUrl(e.target.value)}
+                  placeholder="https://...jpg  or upload below"
+                />
+                <input
+                  type="file"
+                  accept="image/*"
+                  onChange={(e) => {
+                    const f = e.target.files?.[0]
+                    if (!f) return
+                    const rd = new FileReader()
+                    rd.onload = () => setImageUrl(String(rd.result || ''))
+                    rd.readAsDataURL(f)
+                  }}
+                />
+                {imageUrl.trim() && (
+                  <div style={{ marginTop: 8 }}>
+                    <img src={imageUrl} alt="preview" style={{ maxWidth: 220, borderRadius: 10 }} />
+                    <div><button className="ghost-btn" type="button" onClick={() => setImageUrl('')}>✖ Clear image</button></div>
+                  </div>
+                )}
               </>
             )}
           </div>
@@ -211,6 +242,7 @@ export default function App() {
             m.role === 'user' ? (
               <div key={i} className="fade-up">
                 <h2 className="q-title">{m.content}</h2>
+                {m.image && <div><img src={m.image} alt="query" style={{ maxWidth: 320, borderRadius: 12 }} /></div>}
                 {m.queries?.length > 0 && (
                   <div className="pills">{m.queries.map((q) => <span key={q} className="pill">🔍 {q}</span>)}</div>
                 )}

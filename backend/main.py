@@ -23,7 +23,7 @@ except ImportError:  # fallback for old envs
 
 APP_URL = os.getenv("APP_URL", "http://localhost:5173")
 GEMINI_MODEL = "gemini-3.6-flash"
-OR_DEFAULT_MODEL = "google/gemini-2.5-flash"
+OR_DEFAULT_MODEL = "openai/gpt-4o-mini"
 
 app = FastAPI(title="Lumina API")
 app.add_middleware(
@@ -40,6 +40,7 @@ class AskRequest(BaseModel):
     api_key: str = Field(min_length=8, max_length=500)
     model: str = ""  # optional override; defaults per provider
     depth: int = 3  # 1 | 3 | 5
+    image_url: str = ""  # optional: http(s) URL or data:image/...;base64,... for vision
 
 
 class Source(BaseModel):
@@ -57,6 +58,37 @@ class AskResponse(BaseModel):
 
 
 # ---------- LLM ----------
+def llm_vision(question: str, image_url: str, api_key: str, model: str) -> str:
+    """OpenRouter vision call — Python version of JS SDK chat.send with image_url."""
+    r = requests.post(
+        "https://openrouter.ai/api/v1/chat/completions",
+        headers={
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
+            "HTTP-Referer": APP_URL,
+            "X-Title": "Lumina",
+        },
+        json={
+            "model": model or OR_DEFAULT_MODEL,
+            "max_tokens": 2048,
+            "messages": [{
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": question or "What is in this image?"},
+                    {"type": "image_url", "image_url": {"url": image_url}},
+                ],
+            }],
+        },
+        timeout=90,
+    )
+    if r.status_code == 402:
+        raise HTTPException(402, "OpenRouter credits exhausted. Top up at openrouter.ai/settings/credits or use Gemini direct.")
+    if r.status_code == 401:
+        raise HTTPException(401, "Invalid OpenRouter API key.")
+    r.raise_for_status()
+    return r.json()["choices"][0]["message"]["content"]
+
+
 def llm_generate(prompt: str, provider: str, api_key: str, model: str) -> str:
     if provider == "openrouter":
         r = requests.post(
@@ -168,6 +200,19 @@ def ask(req: AskRequest):
     if provider not in ("openrouter", "gemini"):
         raise HTTPException(400, "provider must be 'openrouter' or 'gemini'")
     depth = req.depth if req.depth in (1, 3, 5) else 3
+    image_url = (req.image_url or "").strip()
+
+    # ---- Vision path: image attached -> direct OpenRouter vision, no web search ----
+    if image_url:
+        if provider != "openrouter":
+            raise HTTPException(400, "Image questions need provider='openrouter' (e.g. model openai/gpt-4o-mini).")
+        try:
+            answer = llm_vision(req.question, image_url, req.api_key, req.model.strip())
+        except HTTPException:
+            raise
+        except Exception as e:
+            raise HTTPException(502, f"Vision failed: {e}")
+        return AskResponse(answer=answer, sources=[], queries=[req.question])
 
     def llm(prompt: str) -> str:
         return llm_generate(prompt, provider, req.api_key, req.model.strip())
