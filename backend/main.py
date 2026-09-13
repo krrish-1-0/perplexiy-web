@@ -146,6 +146,17 @@ def deep_search(queries: list[str], per_query: int):
 
 
 # ---------- Routes ----------
+@app.get("/")
+def root():
+    return {
+        "service": "Lumina API",
+        "status": "live",
+        "usage": "POST /api/ask with {question, provider, api_key, depth}",
+        "health": "/api/health",
+        "docs": "/docs",
+    }
+
+
 @app.get("/api/health")
 def health():
     return {"ok": True}
